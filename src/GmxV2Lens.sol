@@ -5,10 +5,13 @@ import "./gmx/Keys.sol";
 import "./interfaces/IReader.sol";
 import "./interfaces/IDataStore.sol";
 import "./interfaces/IOracle.sol";
+import "./interfaces/IVault.sol";
 import "./interfaces/IMarket.sol";
 import "./interfaces/IMarketUtils.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
-contract GmxV2Lens {
+contract GmxV2Lens is UUPSUpgradeable, OwnableUpgradeable {
     uint256 public number;
     address public constant dataStore =
         0xFD70de6b91282D8017aA4E741e9Ae325CAb992d8;
@@ -17,10 +20,10 @@ contract GmxV2Lens {
         IReader(0xdA5A70c885187DaA71E7553ca9F728464af8d2ad);
     IOracle constant gmxV2Oracle =
         IOracle(0xa11B501c2dd83Acd29F6727570f2502FAaa617F2);
+    IVault constant gmxVault =
+        IVault(0x489ee077994B6658eAfA855C308275EAd8097C4A);
     IMarketUtils constant gmxV2MarketUtils =
         IMarketUtils(0xDd534dAADa2cEb42d65D7079031A33A109B5c0F1);
-    bytes32 public constant MAX_PNL_FACTOR_FOR_TRADERS =
-        keccak256(abi.encode("MAX_PNL_FACTOR_FOR_TRADERS"));
 
     struct MarketDataState {
         address marketToken;
@@ -49,6 +52,15 @@ contract GmxV2Lens {
         uint256 maxOpenInterestUsdShort; // 30 decimals
     }
 
+    function initialize() external initializer {
+        __Ownable_init(msg.sender);
+        __UUPSUpgradeable_init();
+    }
+
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal override onlyOwner {}
+
     function getMarketData(
         address marketID
     ) external view returns (MarketDataState memory marketData) {
@@ -62,15 +74,15 @@ contract GmxV2Lens {
         marketData.longToken = market.longToken;
         marketData.shortToken = market.shortToken;
 
-        IPrice.Props memory indexTokenPrice = gmxV2Oracle.getPrimaryPrice(
-            market.indexToken
-        );
-        IPrice.Props memory longTokenPrice = gmxV2Oracle.getPrimaryPrice(
-            market.longToken
-        );
-        IPrice.Props memory shortTokenPrice = gmxV2Oracle.getPrimaryPrice(
-            market.shortToken
-        );
+        IPrice.Props memory indexTokenPrice;
+        indexTokenPrice.max = gmxVault.getMaxPrice(market.indexToken);
+        indexTokenPrice.min = gmxVault.getMinPrice(market.indexToken);
+        IPrice.Props memory longTokenPrice;
+        longTokenPrice.max = gmxVault.getMaxPrice(market.longToken);
+        longTokenPrice.min = gmxVault.getMinPrice(market.longToken);
+        IPrice.Props memory shortTokenPrice;
+        shortTokenPrice.max = gmxVault.getMaxPrice(market.shortToken);
+        shortTokenPrice.min = gmxVault.getMinPrice(market.shortToken);
 
         IMarketUtils.MarketPoolValueInfo
             memory marketPoolInfo = gmxV2MarketUtils.getPoolValueInfo(
@@ -79,7 +91,7 @@ contract GmxV2Lens {
                 indexTokenPrice,
                 longTokenPrice,
                 shortTokenPrice,
-                MAX_PNL_FACTOR_FOR_TRADERS,
+                Keys.MAX_PNL_FACTOR_FOR_DEPOSITS,
                 true
             );
 
