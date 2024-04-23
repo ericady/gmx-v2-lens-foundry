@@ -1,29 +1,30 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.23;
 
-import "./gmx/Keys.sol";
 import "./interfaces/IReader.sol";
 import "./interfaces/IDataStore.sol";
 import "./interfaces/IOracle.sol";
 import "./interfaces/IVault.sol";
-import "./interfaces/IMarket.sol";
 import "./interfaces/IMarketUtils.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@gmx-synthetics/contracts/market/Market.sol";
+import "@gmx-synthetics/contracts/market/MarketUtils.sol";
+import "@gmx-synthetics/contracts/market/MarketPoolValueInfo.sol";
+import "@gmx-synthetics/contracts/data/Keys.sol";
+import "@gmx-synthetics/contracts/data/DataStore.sol";
+import "@gmx-synthetics/contracts/reader/Reader.sol";
+import "@gmx-synthetics/contracts/reader/ReaderUtils.sol";
+import "@gmx-synthetics/contracts/price/Price.sol";
 
 contract GmxV2Lens is UUPSUpgradeable, OwnableUpgradeable {
-    uint256 public number;
-    address public constant dataStore =
-        0xFD70de6b91282D8017aA4E741e9Ae325CAb992d8;
+    DataStore public constant dataStore =
+        DataStore(0xFD70de6b91282D8017aA4E741e9Ae325CAb992d8);
 
-    IReader constant gmxV2Reader =
-        IReader(0xdA5A70c885187DaA71E7553ca9F728464af8d2ad);
-    IOracle constant gmxV2Oracle =
-        IOracle(0xa11B501c2dd83Acd29F6727570f2502FAaa617F2);
+    Reader constant gmxV2Reader =
+        Reader(0xdA5A70c885187DaA71E7553ca9F728464af8d2ad);
     IVault constant gmxVault =
         IVault(0x489ee077994B6658eAfA855C308275EAd8097C4A);
-    IMarketUtils constant gmxV2MarketUtils =
-        IMarketUtils(0xDd534dAADa2cEb42d65D7079031A33A109B5c0F1);
 
     struct MarketDataState {
         address marketToken;
@@ -53,7 +54,7 @@ contract GmxV2Lens is UUPSUpgradeable, OwnableUpgradeable {
     }
 
     function initialize() external initializer {
-        __Ownable_init(msg.sender);
+        __Ownable_init();
         __UUPSUpgradeable_init();
     }
 
@@ -64,28 +65,25 @@ contract GmxV2Lens is UUPSUpgradeable, OwnableUpgradeable {
     function getMarketData(
         address marketID
     ) external view returns (MarketDataState memory marketData) {
-        IMarket.Props memory market = gmxV2Reader.getMarket(
-            dataStore,
-            marketID
-        );
+        Market.Props memory market = gmxV2Reader.getMarket(dataStore, marketID);
 
         marketData.marketToken = market.marketToken;
         marketData.indexToken = market.indexToken;
         marketData.longToken = market.longToken;
         marketData.shortToken = market.shortToken;
 
-        IPrice.Props memory indexTokenPrice;
+        Price.Props memory indexTokenPrice;
         indexTokenPrice.max = gmxVault.getMaxPrice(market.indexToken);
         indexTokenPrice.min = gmxVault.getMinPrice(market.indexToken);
-        IPrice.Props memory longTokenPrice;
+        Price.Props memory longTokenPrice;
         longTokenPrice.max = gmxVault.getMaxPrice(market.longToken);
         longTokenPrice.min = gmxVault.getMinPrice(market.longToken);
-        IPrice.Props memory shortTokenPrice;
+        Price.Props memory shortTokenPrice;
         shortTokenPrice.max = gmxVault.getMaxPrice(market.shortToken);
         shortTokenPrice.min = gmxVault.getMinPrice(market.shortToken);
 
-        IMarketUtils.MarketPoolValueInfo
-            memory marketPoolInfo = gmxV2MarketUtils.getPoolValueInfo(
+        MarketPoolValueInfo.Props memory marketPoolInfo = MarketUtils
+            .getPoolValueInfo(
                 dataStore,
                 market,
                 indexTokenPrice,
@@ -104,12 +102,12 @@ contract GmxV2Lens is UUPSUpgradeable, OwnableUpgradeable {
         marketData.pnlShort = marketPoolInfo.shortPnl;
         marketData.netPnl = marketPoolInfo.netPnl;
 
-        IMarketUtils.MarketPrices memory prices;
+        MarketUtils.MarketPrices memory prices;
         prices.indexTokenPrice = indexTokenPrice;
         prices.longTokenPrice = longTokenPrice;
         prices.shortTokenPrice = shortTokenPrice;
 
-        IReaderUtils.MarketInfo memory marketInfo = gmxV2Reader.getMarketInfo(
+        ReaderUtils.MarketInfo memory marketInfo = gmxV2Reader.getMarketInfo(
             dataStore,
             prices,
             marketID
@@ -123,138 +121,37 @@ contract GmxV2Lens is UUPSUpgradeable, OwnableUpgradeable {
             .nextFunding
             .fundingFactorPerSecond;
 
-        marketData.openInterestLong = getOpenInterestInTokens(market, true);
-        marketData.openInterestShort = getOpenInterestInTokens(market, false);
-        marketData.reservedUsdLong = getReservedUsd(market, prices, true);
-        marketData.reservedUsdShort = getReservedUsd(market, prices, false);
-        marketData.maxOpenInterestUsdLong = getMaxOpenInterest(marketID, true);
-        marketData.maxOpenInterestUsdShort = getMaxOpenInterest(
+        marketData.openInterestLong = MarketUtils.getOpenInterestInTokens(
+            dataStore,
+            market,
+            true
+        );
+        marketData.openInterestShort = MarketUtils.getOpenInterestInTokens(
+            dataStore,
+            market,
+            false
+        );
+        marketData.reservedUsdLong = MarketUtils.getReservedUsd(
+            dataStore,
+            market,
+            prices,
+            true
+        );
+        marketData.reservedUsdShort = MarketUtils.getReservedUsd(
+            dataStore,
+            market,
+            prices,
+            false
+        );
+        marketData.maxOpenInterestUsdLong = MarketUtils.getMaxOpenInterest(
+            dataStore,
+            marketID,
+            true
+        );
+        marketData.maxOpenInterestUsdShort = MarketUtils.getMaxOpenInterest(
+            dataStore,
             marketID,
             false
         );
-    }
-
-    function getOpenInterestInTokens(
-        IMarket.Props memory market,
-        bool isLong
-    ) internal view returns (uint256) {
-        uint256 divisor = getPoolDivisor(market.longToken, market.shortToken);
-        uint256 openInterestUsingLongTokenAsCollateral = getOpenInterestInTokens(
-                market.marketToken,
-                market.longToken,
-                isLong,
-                divisor
-            );
-        uint256 openInterestUsingShortTokenAsCollateral = getOpenInterestInTokens(
-                market.marketToken,
-                market.shortToken,
-                isLong,
-                divisor
-            );
-
-        return
-            openInterestUsingLongTokenAsCollateral +
-            openInterestUsingShortTokenAsCollateral;
-    }
-
-    function getOpenInterestInTokens(
-        address market,
-        address collateralToken,
-        bool isLong,
-        uint256 divisor
-    ) internal view returns (uint256) {
-        return
-            IDataStore(dataStore).getUint(
-                Keys.openInterestInTokensKey(market, collateralToken, isLong)
-            ) / divisor;
-    }
-
-    function getPoolDivisor(
-        address longToken,
-        address shortToken
-    ) internal pure returns (uint256) {
-        return longToken == shortToken ? 2 : 1;
-    }
-
-    function getReservedUsd(
-        IMarket.Props memory market,
-        IMarketUtils.MarketPrices memory prices,
-        bool isLong
-    ) internal view returns (uint256) {
-        uint256 reservedUsd;
-        if (isLong) {
-            // for longs calculate the reserved USD based on the open interest and current indexTokenPrice
-            // this works well for e.g. an ETH / USD market with long collateral token as WETH
-            // the available amount to be reserved would scale with the price of ETH
-            // this also works for e.g. a SOL / USD market with long collateral token as WETH
-            // if the price of SOL increases more than the price of ETH, additional amounts would be
-            // automatically reserved
-            uint256 openInterestInTokens = getOpenInterestInTokens(
-                market,
-                isLong
-            );
-            reservedUsd = openInterestInTokens * prices.indexTokenPrice.max;
-        } else {
-            // for shorts use the open interest as the reserved USD value
-            // this works well for e.g. an ETH / USD market with short collateral token as USDC
-            // the available amount to be reserved would not change with the price of ETH
-            reservedUsd = getOpenInterest(market, isLong);
-        }
-
-        return reservedUsd;
-    }
-
-    function getOpenInterest(
-        IMarket.Props memory market
-    ) internal view returns (uint256) {
-        uint256 longOpenInterest = getOpenInterest(market, true);
-        uint256 shortOpenInterest = getOpenInterest(market, false);
-
-        return longOpenInterest + shortOpenInterest;
-    }
-
-    function getOpenInterest(
-        IMarket.Props memory market,
-        bool isLong
-    ) internal view returns (uint256) {
-        uint256 divisor = getPoolDivisor(market.longToken, market.shortToken);
-        uint256 openInterestUsingLongTokenAsCollateral = getOpenInterest(
-            market.marketToken,
-            market.longToken,
-            isLong,
-            divisor
-        );
-        uint256 openInterestUsingShortTokenAsCollateral = getOpenInterest(
-            market.marketToken,
-            market.shortToken,
-            isLong,
-            divisor
-        );
-
-        return
-            openInterestUsingLongTokenAsCollateral +
-            openInterestUsingShortTokenAsCollateral;
-    }
-
-    function getOpenInterest(
-        address market,
-        address collateralToken,
-        bool isLong,
-        uint256 divisor
-    ) internal view returns (uint256) {
-        return
-            IDataStore(dataStore).getUint(
-                Keys.openInterestKey(market, collateralToken, isLong)
-            ) / divisor;
-    }
-
-    function getMaxOpenInterest(
-        address market,
-        bool isLong
-    ) internal view returns (uint256) {
-        return
-            IDataStore(dataStore).getUint(
-                Keys.maxOpenInterestKey(market, isLong)
-            );
     }
 }

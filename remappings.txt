@@ -1,2 +1,6 @@
+@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
 @openzeppelin/contracts/=lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/
 @openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/
+@gmx-synthetics/contracts/=lib/gmx-synthetics/contracts
+prb-math/contracts/=lib/prb-math.git/contracts
+hardhat/=lib/hardhat/packages/hardhat-core/
