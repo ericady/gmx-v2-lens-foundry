@@ -19,3 +19,6 @@
 [submodule "lib/prb-math.git"]
 	path = lib/prb-math.git
 	url = https://github.com/PaulRBerg/prb-math.git
+[submodule "lib/hardhat"]
+	path = lib/hardhat
+	url = https://github.com/NomicFoundation/hardhat
